@@ -1,18 +1,6 @@
-# halo2-merkle-tree
-
-This repo includes a few chips and circuits that slowly towards a fully function merkle tree chip implementation in Halo2 with the Poseidon hash function.
+# halo2_dynamic_database
 
 ## Instruction
-
-Compile the repo
-
 ```
-cargo build
+/usr/bin/time -v cargo test --package halo2_merkle_tree --lib -- chips::merkle_v3_1::tests::test --exact --nocapture 
 ```
-
-Run examples
-
-```
-cargo test -- --nocapture test
-```
-# halo2_dynamic_database
