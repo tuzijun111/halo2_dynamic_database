@@ -563,6 +563,7 @@ dependencies = [
  "halo2_proofs",
  "halo2curves 0.6.1",
  "plotters",
+ "rand",
  "tabbycat",
 ]
 

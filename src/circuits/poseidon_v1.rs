@@ -3,19 +3,19 @@ An easy-to-use implementation of the Poseidon Hash in the form of a Halo2 Chip. 
 is already implemented in halo2_gadgets, there is no wrapper chip that makes it easy to use in other circuits.
 */
 
-use super::super::chips::poseidon::{PoseidonChip, PoseidonConfig};
+use super::super::chips::poseidon_v1::{PoseidonChip, PoseidonConfig};
 use halo2_gadgets::poseidon::{primitives::*};
 use halo2_proofs::{circuit::*, plonk::*};
 use std::marker::PhantomData;
 use halo2curves::pasta::{pallas, vesta, EqAffine, Fp};
-
+const LEN:usize = 101;
 struct PoseidonCircuit<
     S: Spec<Fp, WIDTH, RATE>,
     const WIDTH: usize,
     const RATE: usize,
     const L: usize,
 > {
-    message: [Value<Fp>; L],
+    message: [Value<Fp>; LEN],
     output: Value<Fp>,
     _spec: PhantomData<S>,
 }
@@ -48,9 +48,20 @@ impl<S: Spec<Fp, WIDTH, RATE>, const WIDTH: usize, const RATE: usize, const L: u
         mut layouter: impl Layouter<Fp>,
     ) -> Result<(), Error> {
         let poseidon_chip = PoseidonChip::<S, WIDTH, RATE, L>::construct(config);
-        let message_cells = poseidon_chip
-            .load_private_inputs(layouter.namespace(|| "load private inputs"), self.message)?;
-        let result = poseidon_chip.hash(layouter.namespace(|| "poseidon chip"), &message_cells)?;
+        
+        // Hash the first three values
+        let message_cells_1 = poseidon_chip
+        .load_private_inputs(layouter.namespace(|| "load private inputs 1"), self.message[..3].try_into().unwrap())?;
+        let result = poseidon_chip.hash(layouter.namespace(|| "poseidon chip 1"), &message_cells_1)?;
+
+        for i in 0..(LEN-2)/2{
+            let result_value = result.value().cloned();
+            let message_cells_2 = poseidon_chip
+                .load_private_inputs(layouter.namespace(|| "load private inputs 2"), [result_value, self.message[2*(i+1)+1].clone(), self.message[2*(i+2)].clone()])?;
+            let result = poseidon_chip.hash(layouter.namespace(|| "poseidon chip 2"), &message_cells_2)?;
+        }
+        
+
         poseidon_chip.expose_public(layouter.namespace(|| "expose result"), &result, 0)?;
         Ok(())
     }
@@ -66,26 +77,28 @@ mod tests {
     };
     use halo2_proofs::{circuit::Value, dev::MockProver};
     use halo2curves::pasta::{pallas, vesta, EqAffine, Fp};
- 
 
+    use super::LEN;
 
     #[test]
     fn test() {
         let input = 99u64;
-        
-        let message: [Fp; 4] = [Fp::from(1); 4];
-
-        // println!("Digest: {:?}", message);
+        let message = [Fp::from(input); LEN];
         let output =
-            poseidon::Hash::<_, OrchardNullifier, ConstantLength<4>, 3, 2>::init().hash(message);
+            poseidon::Hash::<_, OrchardNullifier, ConstantLength<3>, 3, 2>::init().hash(message[..3].try_into().unwrap());
+        for i in 0..(LEN-2)/2{
+            let output =
+            poseidon::Hash::<_, OrchardNullifier, ConstantLength<3>, 3, 2>::init().hash([output, message[2*(i+1)+1], message[2*(i+2)]]);
+        }
+        
 
-        let circuit = PoseidonCircuit::<OrchardNullifier, 3, 2, 4> {
+        let circuit = PoseidonCircuit::<OrchardNullifier, 3, 2, 3> {
             message: message.map(|x| Value::known(x)),
             output: Value::known(output),
             _spec: PhantomData,
         };
         let public_input = vec![output];
-        let prover = MockProver::run(10, &circuit, vec![public_input.clone()]).unwrap();
+        let prover = MockProver::run(13, &circuit, vec![public_input.clone()]).unwrap();
         prover.assert_satisfied();
     }
 }

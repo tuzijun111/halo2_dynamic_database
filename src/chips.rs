@@ -7,4 +7,5 @@ pub mod merkle_v3_1;
 pub mod merkle_v3_2;
 pub mod merkle_v3_3;
 pub mod poseidon;
+pub mod poseidon_v1;
 

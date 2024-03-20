@@ -226,7 +226,7 @@ impl Circuit<Fp> for MerkleTreeV3Circuit {
             &self.elements,
             &self.indices,
         )?;
-        // chip.expose_public(layouter.namespace(|| "leaf"), &leaf_cell, 0)?;
+        
         chip.expose_public(layouter.namespace(|| "public root"), &digest, 1)?;
         Ok(())
     }
@@ -243,6 +243,99 @@ mod tests {
     };
     use halo2_proofs::{circuit::Value, dev::MockProver};
     use halo2curves::pasta::{pallas, vesta, EqAffine, Fp};
+
+    use halo2_proofs::{
+        circuit::{Layouter, SimpleFloorPlanner},
+        plonk::{
+            create_proof, keygen_pk, keygen_vk, verify_proof, Advice, Circuit, Column,
+            ConstraintSystem, Error, Instance,
+        },
+        poly::{
+            commitment::{Params, ParamsProver},
+            ipa::{
+                commitment::{IPACommitmentScheme, ParamsIPA},
+                multiopen::ProverIPA,
+                strategy::SingleStrategy,
+            },
+            VerificationStrategy,
+        },
+        transcript::{
+            Blake2bRead, Blake2bWrite, Challenge255, TranscriptReadBuffer, TranscriptWriterBuffer,
+        },
+    };
+    use rand::rngs::OsRng;
+    use std::process;
+    use std::time::Instant;
+    use std::{fs::File, io::Write, path::Path};
+
+
+    fn generate_and_verify_proof<C: Circuit<Fp>>(
+        k: u32,
+        circuit: C,
+        public_input: &[&[Fp]], // Adjust the type according to your actual public input type
+        proof_path: &str,
+    ) {
+        // Time to generate parameters
+        // let params_time_start = Instant::now();
+        // let params: ParamsIPA<vesta::Affine> = ParamsIPA::new(k);
+        let params_path = "/home/cc/halo2-merkle-tree/src/params/param16";
+        // let mut fd = std::fs::File::create(&params_path).unwrap();
+        // params.write(&mut fd).unwrap();
+        // println!("Time to generate params {:?}", params_time_start.elapsed());
+
+        // read params
+        let mut fd = std::fs::File::open(&params_path).unwrap();
+        let params = ParamsIPA::<vesta::Affine>::read(&mut fd).unwrap();
+
+        // Time to generate verification key (vk)
+        let params_time_start = Instant::now();
+        let vk = keygen_vk(&params, &circuit).expect("keygen_vk should not fail");
+        let params_time = params_time_start.elapsed();
+        println!("Time to generate vk {:?}", params_time);
+
+        // Time to generate proving key (pk)
+        let params_time_start = Instant::now();
+        let pk = keygen_pk(&params, vk.clone(), &circuit).expect("keygen_pk should not fail");
+        let params_time = params_time_start.elapsed();
+        println!("Time to generate pk {:?}", params_time);
+
+        // Proof generation
+        let mut rng = OsRng;
+        let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<_>>::init(vec![]);
+        create_proof::<IPACommitmentScheme<_>, ProverIPA<_>, _, _, _, _>(
+            &params,
+            &pk,
+            &[circuit],
+            &[public_input], // Adjust as necessary for your public input handling
+            &mut rng,
+            &mut transcript,
+        )
+        .expect("proof generation should not fail");
+        let proof = transcript.finalize();
+
+        // Write proof to file
+        File::create(Path::new(proof_path))
+            .expect("Failed to create proof file")
+            .write_all(&proof)
+            .expect("Failed to write proof");
+        println!("Proof written to: {}", proof_path);
+
+        // Proof verification
+        let strategy = SingleStrategy::new(&params);
+        let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
+        assert!(
+            verify_proof(
+                &params,
+                pk.get_vk(),
+                strategy,
+                &[public_input], // Adjust as necessary
+                &mut transcript
+            )
+            .is_ok(),
+            "Proof verification failed"
+        );
+    }
+
 
     fn compute_merkle_root(leaf: &u64, elements: &Vec<u64>, indices: &Vec<u64>) -> Fp {
         let k = elements.len();
@@ -308,26 +401,31 @@ mod tests {
         };
 
         let correct_public_input = vec![Fp::from(leaf), Fp::from(digest)];
-        let correct_prover = MockProver::run(
-            13,
-            &circuit,
-            vec![correct_public_input.clone(), correct_public_input.clone()],
-        )
-        .unwrap();
-        correct_prover.assert_satisfied();
-
-        // let wrong_public_input = vec![Fp::from(leaf), Fp::from(432058235)];
-        // let wrong_prover = MockProver::run(
-        //     10,
+        // let correct_prover = MockProver::run(
+        //     13,
         //     &circuit,
-        //     vec![wrong_public_input.clone(), wrong_public_input.clone()],
+        //     vec![correct_public_input.clone(), correct_public_input.clone()],
         // )
         // .unwrap();
+        // correct_prover.assert_satisfied();
 
-        // let result = wrong_prover.verify();
-        // match result {
-        //     Ok(res) => panic!("shouldve not proved correctly but did"),
-        //     Err(error) => true,
-        // };
+        let k = 13;
+
+        let test = true;
+        // let test = false;
+
+        let input = vec![correct_public_input.clone(), correct_public_input.clone()];
+
+
+        if test {
+            let prover = MockProver::run(k, &circuit, input).unwrap();
+            prover.assert_satisfied();
+        } else {
+            let proof_path = "/home/cc/halo2-merkle-tree/src/proof/proof_merkle1";
+           
+            generate_and_verify_proof(k, circuit, &[&correct_public_input, &correct_public_input], proof_path);
+        }
+
+        
     }
 }
